@@ -1,3 +1,4 @@
+[![Build & Publish Docker Image](https://github.com/Korosys/camoufox-degoog/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Korosys/camoufox-degoog/actions/workflows/docker-publish.yml)
 # camoufox-degoog
 
 A minimal Docker container that runs a [Camoufox](https://github.com/daijro/camoufox) server for use as a transport with the [degoog](https://github.com/degoog-org/degoog) self-hosted search aggregator.
