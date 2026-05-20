@@ -1,0 +1,113 @@
+name: Build & Publish Docker Image
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Check for new camoufox releases every day at 06:00 UTC
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  check-camoufox-version:
+    runs-on: ubuntu-latest
+    outputs:
+      camoufox_version: ${{ steps.pypi.outputs.version }}
+      should_build: ${{ steps.compare.outputs.should_build }}
+    steps:
+      - name: Fetch latest camoufox version from PyPI
+        id: pypi
+        run: |
+          VERSION=$(curl -s https://pypi.org/pypi/camoufox/json | jq -r '.info.version')
+          echo "Latest camoufox on PyPI: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Get currently published image camoufox version
+        id: current
+        run: |
+          # Pull the label from the last published image (empty string if image doesn't exist yet)
+          CURRENT=$(docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            --format '{{ index .Manifest.Annotations "org.opencontainers.image.camoufox-version" }}' 2>/dev/null || echo "")
+          echo "Current image camoufox version: ${CURRENT:-none}"
+          echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to build
+        id: compare
+        run: |
+          NEW="${{ steps.pypi.outputs.version }}"
+          OLD="${{ steps.current.outputs.version }}"
+          # Always build on push to main or manual dispatch; otherwise only if version changed
+          if [[ "${{ github.event_name }}" != "schedule" || "$NEW" != "$OLD" ]]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Will build: new=$NEW old=${OLD:-none}"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping build — camoufox is still at $NEW"
+          fi
+
+  build-and-push:
+    needs: check-camoufox-version
+    if: needs.check-camoufox-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch support)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Tag with the camoufox version
+            type=raw,value=camoufox-${{ needs.check-camoufox-version.outputs.camoufox_version }}
+            # Always update :latest
+            type=raw,value=latest
+            # Tag with the git SHA for traceability
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.camoufox-version=${{ needs.check-camoufox-version.outputs.camoufox_version }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Pass the version as a build arg so you can use it in the Dockerfile if needed
+          build-args: |
+            CAMOUFOX_VERSION=${{ needs.check-camoufox-version.outputs.camoufox_version }}
+          # Cache layers between runs for faster builds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          echo "### ✅ Image published" >> $GITHUB_STEP_SUMMARY
+          echo "| Key | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| camoufox version | \`${{ needs.check-camoufox-version.outputs.camoufox_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry | \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tags | \`latest\`, \`camoufox-${{ needs.check-camoufox-version.outputs.camoufox_version }}\` |" >> $GITHUB_STEP_SUMMARY
