@@ -13,45 +13,66 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  check-camoufox-version:
+  check-versions:
     runs-on: ubuntu-latest
     outputs:
-      camoufox_version: ${{ steps.pypi.outputs.version }}
+      pypi_version: ${{ steps.pypi.outputs.version }}
+      binary_version: ${{ steps.binary.outputs.version }}
       should_build: ${{ steps.compare.outputs.should_build }}
     steps:
-      - name: Fetch latest camoufox version from PyPI
+      - name: Fetch latest camoufox pip version from PyPI
         id: pypi
         run: |
           VERSION=$(curl -s https://pypi.org/pypi/camoufox/json | jq -r '.info.version')
-          echo "Latest camoufox on PyPI: $VERSION"
+          echo "PyPI version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Get currently published image camoufox version
+      - name: Fetch latest camoufox browser binary version from GitHub releases
+        id: binary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/daijro/camoufox/releases/latest \
+            | jq -r '.tag_name')
+          echo "Binary release version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Get versions baked into the current published image
         id: current
         run: |
-          # Pull the label from the last published image (empty string if image doesn't exist yet)
-          CURRENT=$(docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
-            --format '{{ index .Manifest.Annotations "org.opencontainers.image.camoufox-version" }}' 2>/dev/null || echo "")
-          echo "Current image camoufox version: ${CURRENT:-none}"
-          echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          IMAGE_LOWER=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
+          PYPI=$(docker buildx imagetools inspect ${IMAGE_LOWER}:latest \
+            --format '{{ index .Manifest.Annotations "org.opencontainers.image.camoufox-pypi-version" }}' 2>/dev/null || echo "")
+          BIN=$(docker buildx imagetools inspect ${IMAGE_LOWER}:latest \
+            --format '{{ index .Manifest.Annotations "org.opencontainers.image.camoufox-binary-version" }}' 2>/dev/null || echo "")
+          echo "Current image — pip: ${PYPI:-none}, binary: ${BIN:-none}"
+          echo "pypi=${PYPI}" >> "$GITHUB_OUTPUT"
+          echo "binary=${BIN}" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether to build
         id: compare
         run: |
-          NEW="${{ steps.pypi.outputs.version }}"
-          OLD="${{ steps.current.outputs.version }}"
-          # Always build on push to main or manual dispatch; otherwise only if version changed
-          if [[ "${{ github.event_name }}" != "schedule" || "$NEW" != "$OLD" ]]; then
+          NEW_PYPI="${{ steps.pypi.outputs.version }}"
+          NEW_BIN="${{ steps.binary.outputs.version }}"
+          OLD_PYPI="${{ steps.current.outputs.pypi }}"
+          OLD_BIN="${{ steps.current.outputs.binary }}"
+
+          if [[ "${{ github.event_name }}" != "schedule" ]]; then
+            echo "Non-scheduled run — building unconditionally"
             echo "should_build=true" >> "$GITHUB_OUTPUT"
-            echo "Will build: new=$NEW old=${OLD:-none}"
+          elif [[ "$NEW_PYPI" != "$OLD_PYPI" || "$NEW_BIN" != "$OLD_BIN" ]]; then
+            echo "Version changed — pip: $OLD_PYPI → $NEW_PYPI | binary: $OLD_BIN → $NEW_BIN"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
           else
+            echo "No changes — pip: $NEW_PYPI | binary: $NEW_BIN"
             echo "should_build=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping build — camoufox is still at $NEW"
           fi
 
   build-and-push:
-    needs: check-camoufox-version
-    if: needs.check-camoufox-version.outputs.should_build == 'true'
+    needs: check-versions
+    if: needs.check-versions.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -74,40 +95,47 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Lowercase image name
+        id: image
+        run: echo "name=$(echo ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ steps.image.outputs.name }}
+          # latest is pushed separately below so GHCR displays it in the pull command
           tags: |
-            # Tag with the camoufox version
-            type=raw,value=camoufox-${{ needs.check-camoufox-version.outputs.camoufox_version }}
-            # Always update :latest
-            type=raw,value=latest
-            # Tag with the git SHA for traceability
             type=sha,prefix=sha-
+            type=raw,value=camoufox-${{ needs.check-versions.outputs.binary_version }}
           labels: |
-            org.opencontainers.image.camoufox-version=${{ needs.check-camoufox-version.outputs.camoufox_version }}
+            org.opencontainers.image.camoufox-pypi-version=${{ needs.check-versions.outputs.pypi_version }}
+            org.opencontainers.image.camoufox-binary-version=${{ needs.check-versions.outputs.binary_version }}
 
-      - name: Build and push Docker image
+      - name: Build and push (sha + version tags)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Pass the version as a build arg so you can use it in the Dockerfile if needed
           build-args: |
-            CAMOUFOX_VERSION=${{ needs.check-camoufox-version.outputs.camoufox_version }}
-          # Cache layers between runs for faster builds
+            CAMOUFOX_VERSION=${{ needs.check-versions.outputs.pypi_version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Push :latest tag
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ steps.image.outputs.name }}:latest \
+            ${{ steps.image.outputs.name }}:camoufox-${{ needs.check-versions.outputs.binary_version }}
 
       - name: Summary
         run: |
           echo "### ✅ Image published" >> $GITHUB_STEP_SUMMARY
           echo "| Key | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| camoufox version | \`${{ needs.check-camoufox-version.outputs.camoufox_version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Registry | \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tags | \`latest\`, \`camoufox-${{ needs.check-camoufox-version.outputs.camoufox_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| pip version | \`${{ needs.check-versions.outputs.pypi_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| binary version | \`${{ needs.check-versions.outputs.binary_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry | \`${{ steps.image.outputs.name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tags | \`latest\`, \`camoufox-${{ needs.check-versions.outputs.binary_version }}\` |" >> $GITHUB_STEP_SUMMARY
