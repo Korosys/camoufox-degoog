@@ -1,8 +1,6 @@
 name: Build & Publish Docker Image
 
 on:
-  push:
-    branches: [main]
   schedule:
     # Check for new camoufox releases every day at 06:00 UTC
     - cron: "0 6 * * *"
