@@ -1,4 +1,5 @@
 [![Build & Publish Docker Image](https://github.com/Korosys/camoufox-degoog/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Korosys/camoufox-degoog/actions/workflows/docker-publish.yml)
+
 # camoufox-degoog
 
 A minimal Docker container that runs a [Camoufox](https://github.com/daijro/camoufox) server for use as a transport with the [degoog](https://github.com/degoog-org/degoog) self-hosted search aggregator.
@@ -7,7 +8,7 @@ This follows the setup described in the [degoog official extensions store](https
 
 The camoufox server listens on port 3000.
 
-The image is automatically rebuilt and published to the GitHub Container Registry whenever a new version of `camoufox` is released on PyPI.
+The image is automatically rebuilt and published to the GitHub Container Registry whenever a new version of `camoufox` is released on PyPI or when a new browser binary is published.
 
 ---
 
@@ -60,11 +61,11 @@ docker run -d \
 
 ## Image tags
 
-| Tag | Description |
-|-----|-------------|
-| `latest` | Most recent build |
-| `camoufox-x.y.z` | Pinned to a specific camoufox PyPI version |
-| `sha-xxxxxxx` | Pinned to a specific git commit |
+| Tag              | Description                                          |
+| ---------------- | ---------------------------------------------------- |
+| `latest`         | Most recent build                                    |
+| `camoufox-x.y.z` | Pinned to a specific camoufox browser binary version |
+| `sha-xxxxxxx`    | Pinned to a specific git commit                      |
 
 ---
 
@@ -80,7 +81,8 @@ docker run -d -p 3000:3000 camoufox
 ---
 
 ## What was fixed
-The following line was added to the Dockerfile to fix errors I was getting 
+
+The following line was added to the Dockerfile to fix errors I was getting
 
 ```bash
 RUN apt-get update && apt-get install -y libasound2 && rm -rf /var/lib/apt/lists/*
