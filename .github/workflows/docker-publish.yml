@@ -41,12 +41,15 @@ jobs:
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           IMAGE_LOWER=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
-          PYPI=$(docker buildx imagetools inspect ${IMAGE_LOWER}:latest \
-            --format '{{ index .Manifest.Annotations "org.opencontainers.image.camoufox-pypi-version" }}' 2>/dev/null || echo "")
-          BIN=$(docker buildx imagetools inspect ${IMAGE_LOWER}:latest \
-            --format '{{ index .Manifest.Annotations "org.opencontainers.image.camoufox-binary-version" }}' 2>/dev/null || echo "")
+
+          RAW=$(docker buildx imagetools inspect "${IMAGE_LOWER}:latest" --raw 2>/dev/null || echo "{}")
+
+          # Annotations live at the top level of the raw manifest JSON
+          PYPI=$(echo "$RAW" | jq -r '.annotations["org.opencontainers.image.camoufox-pypi-version"] // ""')
+          BIN=$(echo  "$RAW" | jq -r '.annotations["org.opencontainers.image.camoufox-binary-version"] // ""')
+
           echo "Current image — pip: ${PYPI:-none}, binary: ${BIN:-none}"
-          echo "pypi=${PYPI}" >> "$GITHUB_OUTPUT"
+          echo "pypi=${PYPI}"   >> "$GITHUB_OUTPUT"
           echo "binary=${BIN}" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether to build
