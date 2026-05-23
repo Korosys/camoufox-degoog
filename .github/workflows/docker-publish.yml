@@ -22,7 +22,7 @@ jobs:
       should_build: ${{ steps.compare.outputs.should_build }}
     steps:
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -91,16 +91,16 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up QEMU (multi-arch support)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -112,7 +112,7 @@ jobs:
 
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ steps.image.outputs.name }}
           # latest is pushed separately below so GHCR displays it in the pull command
@@ -124,7 +124,7 @@ jobs:
             org.opencontainers.image.camoufox-binary-version=${{ needs.check-versions.outputs.binary_version }}
 
       - name: Build and push (sha + version tags)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
