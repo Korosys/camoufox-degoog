@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN apt-get update && apt-get install -y libasound2 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y build-essential libasound2  && rm -rf /var/lib/apt/lists/*
 RUN python -m camoufox fetch
 COPY server.py .
 EXPOSE 3000
